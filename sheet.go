@@ -11,13 +11,13 @@ import (
 const sheetURL = "https://docs.google.com/spreadsheets/d/1HAICfDGCxaM9qrBxQwcZJKLi4AOIqPXcV_yqybJI2kM/export?format=csv&gid=0"
 
 type Movie struct {
-	ID        int
-	Title     string
-	Year      int
-	Genres    []string
-	Studio    string
-	Languages []string
-	Duration  int // in minutes; 0 if unknown
+	ID        int      `json:"id"`
+	Title     string   `json:"title"`
+	Year      int      `json:"year"`
+	Genres    []string `json:"genres"`
+	Studio    string   `json:"studio"`
+	Languages []string `json:"languages"`
+	Duration  int      `json:"duration"` // in minutes; 0 if unknown
 }
 
 // fetchMovies downloads the sheet as CSV and turns each row into a Movie.

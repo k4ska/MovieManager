@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -35,6 +36,11 @@ type model struct {
 	sortBy      sortKey
 	sortReverse bool
 
+	syncing  bool      // a background fetch of the sheet is running
+	syncedAt time.Time // when the movies were last fetched (zero if never)
+	syncErr  error     // why the last sync failed, if it did
+	flash    error     // shown in the help bar until the next key press
+
 	width, height int // terminal size, set by tea.WindowSizeMsg
 }
 
@@ -56,9 +62,9 @@ func newModel(movies []Movie) model {
 	return m
 }
 
-// Init runs once at startup. We have nothing to do yet, so no command.
+// Init runs once at startup: fetch fresh movies and start the clock.
 func (m model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(syncCmd(), tickCmd())
 }
 
 // Update reacts to events (key presses, window resizes, ...) and returns the new model.
@@ -70,7 +76,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scrollToCursor()
 		return m, nil
 
+	case syncDoneMsg:
+		m.syncing = false
+		m.syncedAt = msg.syncedAt
+		m.syncErr = nil
+		m.flash = msg.cacheErr // usually nil
+		m.setMovies(msg.movies)
+		return m, nil
+
+	case syncFailedMsg:
+		m.syncing = false
+		m.syncErr = msg.err
+		m.flash = msg.err
+		return m, nil
+
+	case tickMsg:
+		return m, tickCmd() // nothing to change: just redraw, and schedule the next tick
+
 	case tea.KeyPressMsg:
+		m.flash = nil
 		switch m.mode {
 		case searching:
 			return m.updateSearch(msg)
@@ -97,6 +121,11 @@ func (m model) updateBrowse(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.search.Focus()
 	case "f":
 		m.mode = filtering
+	case "R":
+		if !m.syncing {
+			m.syncing = true
+			return m, syncCmd()
+		}
 	case "s":
 		m.sortBy = (m.sortBy + 1) % numSortKeys
 		m.refresh()
@@ -125,8 +154,31 @@ func (m model) updateBrowse(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // refresh rebuilds visible from the search, filters and sort order. The
 // selected movie stays selected if it's still in the list.
 func (m *model) refresh() {
-	selected, hadSelection := m.selected()
+	id, ok := m.selectedID()
+	m.rebuild()
+	m.selectID(id, ok)
+}
 
+// setMovies replaces the whole collection, e.g. after a sync, keeping the
+// selection, search and filters.
+func (m *model) setMovies(movies []Movie) {
+	id, ok := m.selectedID() // must happen before visible stops matching movies
+	m.movies = movies
+
+	m.filterOptions = buildFilterOptions(movies)
+	m.filterCursor = min(m.filterCursor, max(len(m.filterOptions)-1, 0))
+	for opt := range m.activeFilters {
+		if !slices.Contains(m.filterOptions, opt) {
+			delete(m.activeFilters, opt) // that genre or language no longer exists
+		}
+	}
+
+	m.rebuild()
+	m.selectID(id, ok)
+}
+
+// rebuild recomputes visible: the movies that pass the search and filters, sorted.
+func (m *model) rebuild() {
 	query := m.searchQuery()
 	m.visible = nil
 	for i, movie := range m.movies {
@@ -151,13 +203,24 @@ func (m *model) refresh() {
 		return c
 	})
 
+}
+
+// selectID moves the cursor to the movie with this ID, or to the top if it's
+// not in the list.
+func (m *model) selectID(id int, ok bool) {
 	m.cursor = 0
-	if hadSelection {
-		if i := slices.IndexFunc(m.visible, func(idx int) bool { return m.movies[idx].ID == selected.ID }); i >= 0 {
+	if ok {
+		if i := slices.IndexFunc(m.visible, func(idx int) bool { return m.movies[idx].ID == id }); i >= 0 {
 			m.cursor = i
 		}
 	}
 	m.scrollToCursor()
+}
+
+// selectedID returns the ID of the movie under the cursor, if there is one.
+func (m model) selectedID() (int, bool) {
+	movie, ok := m.selected()
+	return movie.ID, ok
 }
 
 // selected returns the movie under the cursor, if there is one.
@@ -182,13 +245,17 @@ func (m *model) scrollToCursor() {
 }
 
 func main() {
-	movies, err := fetchMovies(sheetURL)
+	// Start with the movies from last time; Init fetches fresh ones in the background.
+	cache, err := loadCache()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, "warning: ignoring cache:", err)
 	}
 
-	if _, err := tea.NewProgram(newModel(movies)).Run(); err != nil {
+	m := newModel(cache.Movies)
+	m.syncedAt = cache.SyncedAt
+	m.syncing = true
+
+	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

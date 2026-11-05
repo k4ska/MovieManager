@@ -22,6 +22,7 @@ var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	labelStyle    = lipgloss.NewStyle().Foreground(subtle).Width(10)
 	helpStyle     = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Padding(0, 1) // red
 )
 
 // Lines used by the header and help bar; the panels get the rest of the height.
@@ -44,11 +45,11 @@ func (m model) View() tea.View {
 	if summary := m.activeFilterSummary(); summary != "" {
 		status += " · " + summary
 	}
-	header := headerStyle.Render("MovieManager") + countStyle.Render(status)
+	left := headerStyle.Render("MovieManager") + countStyle.Render(status)
 	if m.mode == searching || m.search.Value() != "" {
-		header += " " + m.search.View()
+		left += " " + m.search.View()
 	}
-	header = ansi.Truncate(header, m.width, "…")
+	header := spaceBetween(left, m.syncStatus(), m.width)
 
 	panelHeight := m.height - chromeHeight
 	listWidth := max(m.width*2/5, 30)
@@ -63,7 +64,11 @@ func (m model) View() tea.View {
 	right = fitBlock(right, detailWidth-panelStyle.GetHorizontalFrameSize(), innerHeight)
 	details := panelStyle.Width(detailWidth).Height(panelHeight).Render(right)
 
-	help := ansi.Truncate(helpStyle.Render(m.helpText()), m.width, "…")
+	help := helpStyle.Render(m.helpText())
+	if m.flash != nil {
+		help = errorStyle.Render("⚠ " + m.flash.Error())
+	}
+	help = ansi.Truncate(help, m.width, "…")
 
 	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left,
 		header,
@@ -76,7 +81,12 @@ func (m model) View() tea.View {
 
 // listView renders the visible slice of the movie list, one movie per line.
 func (m model) listView(width int) string {
-	if len(m.visible) == 0 {
+	switch {
+	case len(m.movies) == 0 && m.syncing:
+		return "Loading movies…"
+	case len(m.movies) == 0:
+		return "No movies yet. Press R to try again."
+	case len(m.visible) == 0:
 		return "No matches."
 	}
 
@@ -147,7 +157,7 @@ func (m model) helpText() string {
 	case filtering:
 		return "j/k move · space toggle · c clear all · enter/esc done"
 	}
-	help := "j/k move · / search · f filter · s sort · S reverse · q quit"
+	help := "j/k move · / search · f filter · s sort · S reverse · R refresh · q quit"
 	if m.search.Value() != "" || m.activeFilterSummary() != "" {
 		help = "esc clear · " + help
 	}
@@ -171,4 +181,29 @@ func plural(n int, noun string) string {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// syncStatus describes where the movies came from, e.g. "synced 5m ago".
+func (m model) syncStatus() string {
+	last := "never synced"
+	if !m.syncedAt.IsZero() {
+		last = "synced " + timeAgo(m.syncedAt)
+	}
+	switch {
+	case m.syncing:
+		return countStyle.Render("syncing…")
+	case m.syncErr != nil:
+		return errorStyle.Render("sync failed · " + last)
+	default:
+		return countStyle.Render(last)
+	}
+}
+
+// spaceBetween puts left and right at opposite ends of a line of the given
+// width. If they don't both fit, left is cut short.
+func spaceBetween(left, right string, width int) string {
+	room := width - lipgloss.Width(right) - 1
+	left = ansi.Truncate(left, max(room, 0), "…")
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	return left + strings.Repeat(" ", max(gap, 0)) + right
 }

@@ -15,14 +15,15 @@ var (
 	accent = lipgloss.Color("4") // blue
 	subtle = lipgloss.Color("8") // gray
 
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(accent).Padding(0, 1)
-	countStyle    = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
-	panelStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(subtle).Padding(0, 1)
-	selectedStyle = lipgloss.NewStyle().Background(accent).Foreground(lipgloss.Color("0")).Bold(true)
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(accent)
-	labelStyle    = lipgloss.NewStyle().Foreground(subtle).Width(10)
-	helpStyle     = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
-	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Padding(0, 1) // red
+	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(accent).Padding(0, 1)
+	countStyle        = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
+	panelStyle        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(subtle).Padding(0, 1)
+	selectedStyle     = lipgloss.NewStyle().Background(accent).Foreground(lipgloss.Color("0")).Bold(true)
+	titleStyle        = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	labelStyle        = lipgloss.NewStyle().Foreground(subtle)
+	columnHeaderStyle = lipgloss.NewStyle().Bold(true)
+	helpStyle         = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
+	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Padding(0, 1) // red
 )
 
 // Lines used by the header and help bar; the panels get the rest of the height.
@@ -37,32 +38,33 @@ func (m model) View() tea.View {
 	if len(m.visible) != len(m.movies) {
 		count = fmt.Sprintf("%d/%s", len(m.visible), count)
 	}
-	arrow := "↑"
-	if m.sortReverse {
-		arrow = "↓"
-	}
-	status := count + " · sort: " + m.sortBy.String() + " " + arrow
 	if summary := m.activeFilterSummary(); summary != "" {
-		status += " · " + summary
+		count += " · " + summary
 	}
-	left := headerStyle.Render("MovieManager") + countStyle.Render(status)
+	left := headerStyle.Render("MovieManager") + countStyle.Render(count)
 	if m.mode == searching || m.search.Value() != "" {
 		left += " " + m.search.View()
 	}
 	header := spaceBetween(left, m.syncStatus(), m.width)
 
+	// The table takes the full width; the filter panel takes ~20% when open.
 	panelHeight := m.height - chromeHeight
-	listWidth := max(m.width*2/5, 30)
-	detailWidth := m.width - listWidth
-
 	innerHeight := panelHeight - panelStyle.GetVerticalFrameSize()
-	list := panelStyle.Width(listWidth).Height(panelHeight).Render(m.listView(listWidth - panelStyle.GetHorizontalFrameSize()))
-	right := m.detailView()
+	tableWidth, filterWidth := m.width, 0
 	if m.mode == filtering {
-		right = m.filterView(innerHeight)
+		filterWidth = max(m.width/5, 24)
+		tableWidth = m.width - filterWidth
 	}
-	right = fitBlock(right, detailWidth-panelStyle.GetHorizontalFrameSize(), innerHeight)
-	details := panelStyle.Width(detailWidth).Height(panelHeight).Render(right)
+
+	tableInner := tableWidth - panelStyle.GetHorizontalFrameSize()
+	panels := panelStyle.Width(tableWidth).Height(panelHeight).Render(
+		fitBlock(m.tableView(tableInner), tableInner, innerHeight))
+	if m.mode == filtering {
+		filterInner := filterWidth - panelStyle.GetHorizontalFrameSize()
+		filters := panelStyle.Width(filterWidth).Height(panelHeight).Render(
+			fitBlock(m.filterView(innerHeight), filterInner, innerHeight))
+		panels = lipgloss.JoinHorizontal(lipgloss.Top, panels, filters)
+	}
 
 	help := helpStyle.Render(m.helpText())
 	if m.flash != nil {
@@ -72,66 +74,19 @@ func (m model) View() tea.View {
 
 	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left,
 		header,
-		lipgloss.JoinHorizontal(lipgloss.Top, list, details),
+		panels,
 		help,
 	))
 	v.AltScreen = true
 	return v
 }
 
-// listView renders the visible slice of the movie list, one movie per line.
-func (m model) listView(width int) string {
-	switch {
-	case len(m.movies) == 0 && m.syncing:
-		return "Loading movies…"
-	case len(m.movies) == 0:
-		return "No movies yet. Press R to try again."
-	case len(m.visible) == 0:
-		return "No matches."
+// sortArrow shows the sort direction: ↑ for A→Z / low→high, ↓ for the reverse.
+func (m model) sortArrow() string {
+	if m.sortReverse {
+		return "↓"
 	}
-
-	var rows []string
-	end := min(m.offset+m.visibleRows(), len(m.visible))
-
-	for i := m.offset; i < end; i++ {
-		movie := m.movies[m.visible[i]]
-		// Title on the left, year (or duration, when sorting by it) on the right.
-		extra := fmt.Sprintf("%d", movie.Year)
-		if m.sortBy == byDuration {
-			extra = formatDuration(movie.Duration)
-		}
-		title := ansi.Truncate(movie.Title, width-lipgloss.Width(extra)-1, "…")
-		gap := width - lipgloss.Width(title) - lipgloss.Width(extra)
-		row := title + strings.Repeat(" ", max(gap, 1)) + extra
-
-		if i == m.cursor {
-			row = selectedStyle.Render(row)
-		}
-		rows = append(rows, row)
-	}
-	return strings.Join(rows, "\n")
-}
-
-// detailView renders everything we know about the selected movie.
-func (m model) detailView() string {
-	movie, ok := m.selected()
-	if !ok {
-		return ""
-	}
-
-	field := func(label, value string) string {
-		return labelStyle.Render(label) + value
-	}
-
-	return strings.Join([]string{
-		titleStyle.Render(movie.Title),
-		"",
-		field("Year", fmt.Sprintf("%d", movie.Year)),
-		field("Genre", strings.Join(movie.Genres, ", ")),
-		field("Studio", movie.Studio),
-		field("Language", strings.Join(movie.Languages, ", ")),
-		field("Duration", formatDuration(movie.Duration)),
-	}, "\n")
+	return "↑"
 }
 
 // formatDuration turns minutes into "2h4m". Unknown (0) shows as empty.

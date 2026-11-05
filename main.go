@@ -231,9 +231,9 @@ func (m model) selected() (Movie, bool) {
 	return m.movies[m.visible[m.cursor]], true
 }
 
-// visibleRows is how many movies fit in the list panel.
+// visibleRows is how many movies fit in the table, below its header row.
 func (m model) visibleRows() int {
-	return max(m.height-chromeHeight-panelStyle.GetVerticalFrameSize(), 1)
+	return max(m.height-chromeHeight-panelStyle.GetVerticalFrameSize()-1, 1)
 }
 
 // scrollToCursor moves the scroll offset just enough to keep the cursor on screen.

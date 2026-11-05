@@ -1,0 +1,7 @@
+# Compiled binary (from `go build`)
+/moviemanager
+
+# Secrets: Google service account keys and local config
+*credentials*.json
+*service-account*.json
+.env

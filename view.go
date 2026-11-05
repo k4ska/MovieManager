@@ -22,6 +22,8 @@ var (
 	titleStyle        = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	labelStyle        = lipgloss.NewStyle().Foreground(subtle)
 	columnHeaderStyle = lipgloss.NewStyle().Bold(true)
+	statValueStyle    = lipgloss.NewStyle().Bold(true)
+	barStyle          = lipgloss.NewStyle().Foreground(accent)
 	helpStyle         = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
 	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Padding(0, 1) // red
 )
@@ -57,8 +59,12 @@ func (m model) View() tea.View {
 	}
 
 	tableInner := tableWidth - panelStyle.GetHorizontalFrameSize()
+	content := m.tableView(tableInner)
+	if m.mode == viewingStats {
+		content = m.statsView(tableInner, innerHeight)
+	}
 	panels := panelStyle.Width(tableWidth).Height(panelHeight).Render(
-		fitBlock(m.tableView(tableInner), tableInner, innerHeight))
+		fitBlock(content, tableInner, innerHeight))
 	if m.mode == filtering {
 		filterInner := filterWidth - panelStyle.GetHorizontalFrameSize()
 		filters := panelStyle.Width(filterWidth).Height(panelHeight).Render(
@@ -111,8 +117,10 @@ func (m model) helpText() string {
 		return "type to filter · ↑/↓ move · enter keep · esc clear"
 	case filtering:
 		return "j/k move · space toggle · c clear all · enter/esc done"
+	case viewingStats:
+		return "t/esc back · stats follow your current search and filters"
 	}
-	help := "j/k move · / search · f filter · s sort · S reverse · R refresh · q quit"
+	help := "j/k move · / search · f filter · s sort · S reverse · t stats · R refresh · q quit"
 	if m.search.Value() != "" || m.activeFilterSummary() != "" {
 		help = "esc clear · " + help
 	}

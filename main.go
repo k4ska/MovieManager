@@ -14,9 +14,10 @@ import (
 type mode int
 
 const (
-	browsing  mode = iota // moving around the list
-	searching             // typing in the search box
-	filtering             // picking genres and languages
+	browsing     mode = iota // moving around the list
+	searching                // typing in the search box
+	filtering                // picking genres and languages
+	viewingStats             // looking at the stats screen
 )
 
 // model holds all the state of the app.
@@ -100,6 +101,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearch(msg)
 		case filtering:
 			return m.updateFilter(msg)
+		case viewingStats:
+			return m.updateStats(msg)
 		default:
 			return m.updateBrowse(msg)
 		}
@@ -121,6 +124,8 @@ func (m model) updateBrowse(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.search.Focus()
 	case "f":
 		m.mode = filtering
+	case "t":
+		m.mode = viewingStats
 	case "R":
 		if !m.syncing {
 			m.syncing = true

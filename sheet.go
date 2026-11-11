@@ -8,7 +8,12 @@ import (
 	"strings"
 )
 
-const sheetURL = "https://docs.google.com/spreadsheets/d/1HAICfDGCxaM9qrBxQwcZJKLi4AOIqPXcV_yqybJI2kM/export?format=csv&gid=0"
+const (
+	spreadsheetID = "1HAICfDGCxaM9qrBxQwcZJKLi4AOIqPXcV_yqybJI2kM"
+	sheetID       = 0 // the "gid" of the tab with the movies: 0 is the first tab
+
+	sheetURL = "https://docs.google.com/spreadsheets/d/" + spreadsheetID + "/export?format=csv&gid=0"
+)
 
 type Movie struct {
 	ID        int      `json:"id"`
@@ -45,10 +50,8 @@ func fetchMovies(url string) ([]Movie, error) {
 	for i, name := range rows[0] {
 		col[strings.TrimSpace(name)] = i
 	}
-	for _, name := range []string{"id", "title", "year", "genre", "studio", "language", "duration"} {
-		if _, ok := col[name]; !ok {
-			return nil, fmt.Errorf("missing column %q", name)
-		}
+	if err := checkColumns(col); err != nil {
+		return nil, err
 	}
 
 	var movies []Movie
@@ -91,6 +94,19 @@ func fetchMovies(url string) ([]Movie, error) {
 	}
 
 	return movies, nil
+}
+
+// sheetColumns are the header names the sheet must have, in any order.
+var sheetColumns = []string{"id", "title", "year", "genre", "studio", "language", "duration"}
+
+// checkColumns reports the first of sheetColumns missing from col.
+func checkColumns(col map[string]int) error {
+	for _, name := range sheetColumns {
+		if _, ok := col[name]; !ok {
+			return fmt.Errorf("missing column %q", name)
+		}
+	}
+	return nil
 }
 
 // splitList turns "Animation, Sci-Fi" into ["Animation", "Sci-Fi"].

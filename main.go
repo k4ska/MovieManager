@@ -14,10 +14,14 @@ import (
 type mode int
 
 const (
-	browsing     mode = iota // moving around the list
-	searching                // typing in the search box
-	filtering                // picking genres and languages
-	viewingStats             // looking at the stats screen
+	browsing         mode = iota // moving around the list
+	searching                    // typing in the search box
+	filtering                    // picking genres and languages
+	viewingStats                 // looking at the stats screen
+	addingSearch                 // typing the title of a movie to add
+	addingPick                   // picking it from the TMDB results
+	addingForm                   // checking its details before saving
+	confirmingDelete             // answering "delete this movie?"
 )
 
 // model holds all the state of the app.
@@ -37,10 +41,23 @@ type model struct {
 	sortBy      sortKey
 	sortReverse bool
 
+	addTitle     textinput.Model // title box of the add flow
+	results      []tmdbResult    // TMDB matches for addTitle
+	resultCursor int
+	form         []formField
+	formCursor   int
+	fromTMDB     bool   // the form was filled in from TMDB
+	loading      string // what the add flow is waiting for, e.g. "Searching TMDB…"
+	review       review // the review from TMDB in progress, if review.active
+	deleting     Movie  // the movie confirmingDelete is asking about
+	saving       bool   // a change to the sheet is being sent
+
 	syncing  bool      // a background fetch of the sheet is running
 	syncedAt time.Time // when the movies were last fetched (zero if never)
 	syncErr  error     // why the last sync failed, if it did
 	flash    error     // shown in the help bar until the next key press
+	notice   string    // like flash, but good news ("Added …"); clears itself after a few seconds
+	noticeID int       // counts notices, so an old timer doesn't clear a newer one
 
 	width, height int // terminal size, set by tea.WindowSizeMsg
 }
@@ -53,9 +70,14 @@ func newModel(movies []Movie) model {
 	styles.Focused.Prompt = styles.Focused.Prompt.Foreground(accent)
 	search.SetStyles(styles)
 
+	addTitle := textinput.New()
+	addTitle.Prompt = "Title: "
+	addTitle.Placeholder = "e.g. Spirited Away"
+
 	m := model{
 		movies:        movies,
 		search:        search,
+		addTitle:      addTitle,
 		filterOptions: buildFilterOptions(movies),
 		activeFilters: map[filterOption]bool{},
 	}
@@ -74,6 +96,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.search.SetWidth(m.width / 2)
+		m.addTitle.SetWidth(m.width / 2)
 		m.scrollToCursor()
 		return m, nil
 
@@ -91,11 +114,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flash = msg.err
 		return m, nil
 
+	case clearNoticeMsg:
+		if msg.id == m.noticeID {
+			m.notice = ""
+		}
+		return m, nil
+
 	case tickMsg:
 		return m, tickCmd() // nothing to change: just redraw, and schedule the next tick
 
+	case tmdbSearchMsg, tmdbMovieMsg, movieAddedMsg, movieUpdatedMsg, movieDeletedMsg:
+		return m.updateEdits(msg)
+
 	case tea.KeyPressMsg:
 		m.flash = nil
+		m.notice = ""
 		switch m.mode {
 		case searching:
 			return m.updateSearch(msg)
@@ -103,15 +136,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFilter(msg)
 		case viewingStats:
 			return m.updateStats(msg)
+		case addingSearch:
+			return m.updateAddSearch(msg)
+		case addingPick:
+			return m.updateAddPick(msg)
+		case addingForm:
+			return m.updateAddForm(msg)
+		case confirmingDelete:
+			return m.updateConfirmDelete(msg)
 		default:
 			return m.updateBrowse(msg)
 		}
 	}
 
-	// Other messages (like the cursor blinking) belong to the search box.
+	// Other messages (like the cursor blinking) belong to the text inputs.
+	// Only the focused one reacts to them.
 	var cmd tea.Cmd
+	cmds := make([]tea.Cmd, 0, len(m.form)+2)
 	m.search, cmd = m.search.Update(msg)
-	return m, cmd
+	cmds = append(cmds, cmd)
+	m.addTitle, cmd = m.addTitle.Update(msg)
+	cmds = append(cmds, cmd)
+	for i := range m.form {
+		m.form[i].input, cmd = m.form[i].input.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // updateBrowse handles key presses while moving around the list.
@@ -126,6 +176,22 @@ func (m model) updateBrowse(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = filtering
 	case "t":
 		m.mode = viewingStats
+	case "a":
+		if !m.saving {
+			return m.startAdding()
+		}
+	case "d":
+		return m.startDeleting()
+	case "u":
+		if id, ok := m.selectedID(); ok {
+			return m.startReview([]int{id})
+		}
+	case "U":
+		var ids []int
+		for _, i := range m.visible {
+			ids = append(ids, m.movies[i].ID)
+		}
+		return m.startReview(ids)
 	case "R":
 		if !m.syncing {
 			m.syncing = true

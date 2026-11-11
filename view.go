@@ -26,6 +26,7 @@ var (
 	barStyle          = lipgloss.NewStyle().Foreground(accent)
 	helpStyle         = lipgloss.NewStyle().Foreground(subtle).Padding(0, 1)
 	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Padding(0, 1) // red
+	noticeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Padding(0, 1) // green
 )
 
 // Lines used by the header and help bar; the panels get the rest of the height.
@@ -63,6 +64,9 @@ func (m model) View() tea.View {
 	if m.mode == viewingStats {
 		content = m.statsView(tableInner, innerHeight)
 	}
+	if m.isAdding() {
+		content = m.addView(tableInner, innerHeight)
+	}
 	panels := panelStyle.Width(tableWidth).Height(panelHeight).Render(
 		fitBlock(content, tableInner, innerHeight))
 	if m.mode == filtering {
@@ -73,6 +77,12 @@ func (m model) View() tea.View {
 	}
 
 	help := helpStyle.Render(m.helpText())
+	if m.notice != "" {
+		help = noticeStyle.Render("✓ " + m.notice)
+	}
+	if m.mode == confirmingDelete {
+		help = errorStyle.Render(fmt.Sprintf("Delete %q (%d) from the sheet? y/n", m.deleting.Title, m.deleting.Year))
+	}
 	if m.flash != nil {
 		help = errorStyle.Render("⚠ " + m.flash.Error())
 	}
@@ -119,8 +129,26 @@ func (m model) helpText() string {
 		return "j/k move · space toggle · c clear all · enter/esc done"
 	case viewingStats:
 		return "t/esc back · stats follow your current search and filters"
+	case addingSearch:
+		if m.review.active {
+			return "enter search TMDB · tab fill in by hand · ctrl+x skip movie · esc stop review"
+		}
+		return "enter search TMDB · tab fill in by hand · esc cancel"
+	case addingPick:
+		if m.review.active {
+			return "j/k move · enter use this one · tab fill in by hand · ctrl+x skip movie · esc edit search"
+		}
+		return "j/k move · enter use this one · tab fill in by hand · esc back"
+	case addingForm:
+		if m.review.active {
+			return "ctrl+s save & next · ctrl+o sheet/TMDB value · ctrl+x skip · ctrl+t other match · tab/↑/↓ move · esc stop"
+		}
+		if m.formCursor == fieldGenre {
+			return "→ complete genre · ctrl+n/p other matches · tab/↑/↓ move · ctrl+s save · esc cancel"
+		}
+		return "tab/↑/↓ move · ctrl+s save (or enter on the last field) · esc cancel"
 	}
-	help := "j/k move · / search · f filter · s sort · S reverse · t stats · R refresh · q quit"
+	help := "j/k move · / search · f filter · s sort · S reverse · a add · d delete · u/U review · t stats · R refresh · q quit"
 	if m.search.Value() != "" || m.activeFilterSummary() != "" {
 		help = "esc clear · " + help
 	}
@@ -153,6 +181,8 @@ func (m model) syncStatus() string {
 		last = "synced " + timeAgo(m.syncedAt)
 	}
 	switch {
+	case m.saving:
+		return countStyle.Render("saving…")
 	case m.syncing:
 		return countStyle.Render("syncing…")
 	case m.syncErr != nil:

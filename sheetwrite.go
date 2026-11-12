@@ -18,7 +18,7 @@ import (
 // needs the Sheets API, signed in as a Google service account that the sheet
 // is shared with (as an Editor).
 
-const sheetsAPI = "https://sheets.googleapis.com/v4/spreadsheets/" + spreadsheetID
+const sheetsAPI = "https://sheets.googleapis.com/v4/spreadsheets/"
 
 // sheetsClient talks to the Sheets API as the service account.
 type sheetsClient struct {
@@ -48,7 +48,7 @@ func (c *sheetsClient) call(method, path string, body, out any) error {
 		}
 		reqBody = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, sheetsAPI+path, reqBody)
+	req, err := http.NewRequest(method, sheetsAPI+spreadsheetID+path, reqBody)
 	if err != nil {
 		return err
 	}

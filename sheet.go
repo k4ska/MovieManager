@@ -8,12 +8,16 @@ import (
 	"strings"
 )
 
-const (
-	spreadsheetID = "1HAICfDGCxaM9qrBxQwcZJKLi4AOIqPXcV_yqybJI2kM"
-	sheetID       = 0 // the "gid" of the tab with the movies: 0 is the first tab
+const sheetID = 0 // the "gid" of the tab with the movies: 0 is the first tab
 
-	sheetURL = "https://docs.google.com/spreadsheets/d/" + spreadsheetID + "/export?format=csv&gid=0"
-)
+// spreadsheetID is the long ID from the sheet's URL. main sets it at startup
+// from the config (see sheetSetting), before anything talks to the sheet.
+var spreadsheetID string
+
+// sheetURL is the public CSV export of the movie tab.
+func sheetURL() string {
+	return fmt.Sprintf("https://docs.google.com/spreadsheets/d/%s/export?format=csv&gid=%d", spreadsheetID, sheetID)
+}
 
 type Movie struct {
 	ID        int      `json:"id"`

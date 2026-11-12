@@ -86,7 +86,7 @@ type (
 // stays responsive while it waits for the network.
 func syncCmd() tea.Cmd {
 	return func() tea.Msg {
-		movies, err := fetchMovies(sheetURL)
+		movies, err := fetchMovies(sheetURL())
 		if err != nil {
 			return syncFailedMsg{err}
 		}

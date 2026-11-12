@@ -316,6 +316,14 @@ func (m *model) scrollToCursor() {
 }
 
 func main() {
+	id, err := sheetSetting()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "See the README for how to set up your Google Sheet.")
+		os.Exit(1)
+	}
+	spreadsheetID = id
+
 	// Start with the movies from last time; Init fetches fresh ones in the background.
 	cache, err := loadCache()
 	if err != nil {
